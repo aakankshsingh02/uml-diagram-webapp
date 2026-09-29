@@ -1,0 +1,54 @@
+# Shared infrastructure only. frontend/ and backend/ run independently (npm run dev in each).
+name: uml-diagram-webapp
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: uml-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-uml}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-uml_password}
+      POSTGRES_DB: ${POSTGRES_DB:-uml_diagrams}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Kroki gateway. PlantUML (full UML 2.x coverage) is built into the core image;
+  # Mermaid and Excalidraw are rendered by companion containers.
+  kroki:
+    image: yuzutech/kroki:latest
+    container_name: uml-kroki
+    restart: unless-stopped
+    depends_on:
+      - mermaid
+      - excalidraw
+    environment:
+      KROKI_MERMAID_HOST: mermaid
+      KROKI_EXCALIDRAW_HOST: excalidraw
+      KROKI_SAFE_MODE: secure
+    ports:
+      - "${KROKI_PORT:-8000}:8000"
+
+  mermaid:
+    image: yuzutech/kroki-mermaid:latest
+    container_name: uml-kroki-mermaid
+    restart: unless-stopped
+    expose:
+      - "8002"
+
+  excalidraw:
+    image: yuzutech/kroki-excalidraw:latest
+    container_name: uml-kroki-excalidraw
+    restart: unless-stopped
+    expose:
+      - "8004"
+
+volumes:
+  postgres-data:

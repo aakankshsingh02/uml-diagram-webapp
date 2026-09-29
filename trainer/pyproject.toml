@@ -1,0 +1,39 @@
+[project]
+name = "uml-trainer"
+version = "0.1.0"
+description = "Trains the UML diagram model on user feedback with OpenPipe ART (LangGraph)"
+readme = "README.md"
+authors = [
+    { name = "switchstack", email = "contactswitchstack@gmail.com" }
+]
+requires-python = ">=3.12"
+dependencies = [
+    "httpx>=0.28.1",
+    "langchain-core>=0.3.51",
+    "openpipe-art[langgraph]>=0.5.20,<0.6",
+    "pydantic>=2.13.5",
+    "pydantic-settings>=2.15.0",
+]
+
+[project.scripts]
+uml-trainer = "uml_trainer.cli:main"
+
+[build-system]
+requires = ["uv_build>=0.12.20,<0.13.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "respx>=0.23.1",
+    "ruff>=0.16.9",
+]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"

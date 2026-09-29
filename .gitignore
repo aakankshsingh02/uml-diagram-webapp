@@ -1,0 +1,5 @@
+.env
+node_modules/
+
+# per-user Claude Code settings
+**/.claude/settings.local.json
