@@ -91,6 +91,9 @@ interface Unit {
 
 const key = (name: string) => name.toLowerCase();
 
+/** How much one position away from the flow order costs, relative to one lifeline crossed. */
+const FLOW_ORDER_WEIGHT = 0.5;
+
 /**
  * Lifeline order for the sequence view, as contiguous units (one per layer; actors and unlayered
  * elements are units of their own):
@@ -132,6 +135,12 @@ function sequenceUnits(model: ArchitectureModel): Unit[] {
 
   const unitOf = (name: string) => units.find((u) => u.elements.some((e) => key(e.name) === name));
   const flat = () => units.flatMap((u) => u.elements.map((e) => key(e.name)));
+  // The flow order: where each lifeline would sit if the diagram simply read left to right.
+  const flowPosition = new Map(flat().map((name, i) => [name, i]));
+  // Whoever starts the flow stays leftmost, so the diagram is read from its trigger.
+  const first = model.interactions[0];
+  const startUnit = first ? unitOf(key(first.from)) : undefined;
+  const lowest = (list: readonly unknown[]) => (startUnit && list[0] === startUnit ? 1 : 0);
 
   const hub = [...model.elements]
     .filter((e) => (partners.get(key(e.name))?.size ?? 0) >= 3)
@@ -147,12 +156,12 @@ function sequenceUnits(model: ArchitectureModel): Unit[] {
     const mid = positions.length / 2;
     const median = positions.length % 2 ? positions[Math.floor(mid)]! : (positions[mid - 1]! + positions[mid]!) / 2;
     // Insert at the unit boundary closest to the median (a boundary b sits between positions b-1 and b).
-    let best = 0;
+    let best = lowest(units);
     let bestDistance = Number.POSITIVE_INFINITY;
     let boundary = 0;
     for (let u = 0; u <= units.length; u++) {
       const distance = Math.abs(boundary - (median + 0.5));
-      if (distance < bestDistance) [best, bestDistance] = [u, distance];
+      if (u >= lowest(units) && distance < bestDistance) [best, bestDistance] = [u, distance];
       if (u < units.length) boundary += units[u]!.elements.length;
     }
     units.splice(best, 0, hubUnit);
@@ -170,26 +179,33 @@ function sequenceUnits(model: ArchitectureModel): Unit[] {
     pinned.push({ own, partner });
   }
 
-  // Lifelines crossed by arrows, summed over the flow: the clutter this ordering minimises.
-  const crossings = () => {
-    const position = new Map(flat().map((name, i) => [name, i]));
-    return model.interactions.reduce((sum, it) => {
+  /**
+   * What the ordering minimises: lifelines crossed by arrows (clutter), plus a charge for every
+   * position a lifeline sits away from the flow order, so the result still reads left to right.
+   */
+  const cost = () => {
+    const order = flat();
+    const position = new Map(order.map((name, i) => [name, i]));
+    const crossed = model.interactions.reduce((sum, it) => {
       const a = position.get(key(it.from));
       const b = position.get(key(it.to));
       return a === undefined || b === undefined ? sum : sum + Math.max(0, Math.abs(a - b) - 1);
     }, 0);
+    const displaced = order.reduce((sum, name, i) => sum + Math.abs(i - (flowPosition.get(name) ?? i)), 0);
+    return crossed + FLOW_ORDER_WEIGHT * displaced;
   };
-  /** Moves each item of `list` to the position with the fewest crossings; only strict gains count. */
+  /** Moves each item of `list` to the position with the lowest cost; only strict gains count. */
   const improve = <T,>(list: T[]) => {
     let moved = false;
     for (const item of [...list]) {
+      if (item === startUnit) continue;
       const from = list.indexOf(item);
-      let best = { at: from, cost: crossings() };
+      let best = { at: from, cost: cost() };
       list.splice(from, 1);
-      for (let at = 0; at <= list.length; at++) {
+      for (let at = lowest(list); at <= list.length; at++) {
         list.splice(at, 0, item);
-        const cost = crossings();
-        if (cost < best.cost) best = { at, cost };
+        const candidate = cost();
+        if (candidate < best.cost) best = { at, cost: candidate };
         list.splice(at, 1);
       }
       list.splice(best.at, 0, item);
@@ -240,15 +256,34 @@ function projectSequence(model: ArchitectureModel, options: ProjectionOptions): 
     lines.push("    end");
   }
 
+  // Calls still in progress, innermost last. A call's reply is drawn when the callee's own work is
+  // over, i.e. once the flow moves on to a message the callee (or something it called) doesn't send.
   const steps = model.interactions;
+  const open: { from: string; to: string; reply: string | null }[] = [];
+  const close = (call: (typeof open)[number]) => {
+    if (call.reply) lines.push(`    ${id(call.to)}-->>${id(call.from)}: ${call.reply}`);
+  };
+  const unwindTo = (sender: string) => {
+    while (open.length && key(open.at(-1)!.to) !== key(sender)) close(open.pop()!);
+  };
+
   steps.forEach((it, i) => {
-    // A reply the model wrote out as a step is drawn as one; it never gets a reply of its own.
-    const reply = isExplicitReply(steps, i);
-    lines.push(`    ${id(it.from)}${reply ? "-->>" : "->>"}${id(it.to)}: ${label(it.message)}`);
-    const synthesise =
-      !!it.returns?.trim() && !reply && !isAnsweredExplicitly(steps, i) && !fireAndForget.has(firstVerb(it.message));
-    if (synthesise) lines.push(`    ${id(it.to)}-->>${id(it.from)}: ${label(it.returns!)}`);
+    unwindTo(it.from);
+    if (isExplicitReply(steps, i)) {
+      // A reply the model wrote out as a step answers the open call it reverses, replacing that call's own reply.
+      const answered = open.at(-1);
+      if (answered && key(answered.from) === key(it.to)) open.pop();
+      lines.push(`    ${id(it.from)}-->>${id(it.to)}: ${label(it.message)}`);
+      return;
+    }
+    lines.push(`    ${id(it.from)}->>${id(it.to)}: ${label(it.message)}`);
+    const reply =
+      it.returns?.trim() && !isAnsweredExplicitly(steps, i) && !fireAndForget.has(firstVerb(it.message))
+        ? label(it.returns)
+        : null;
+    open.push({ from: it.from, to: it.to, reply });
   });
+  while (open.length) close(open.pop()!);
   return lines.join("\n");
 }
 
