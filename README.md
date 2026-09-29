@@ -211,7 +211,7 @@ uv run uml-trainer            # one training step (paid)
 | :--- | :--- | :--- |
 | `DATABASE_URL` | — | Postgres connection string |
 | `KROKI_URL` | `http://localhost:8000` | Diagram renderer |
-| `GROQ_API_KEY` | empty | LLM key; generation returns 503 until it's set |
+| `GROQ_API_KEY` | — | LLM key; generation returns 503 until it's set |
 | `GROQ_MODEL` | `openai/gpt-oss-120b` | Model for all LLM calls |
 | `GROQ_REASONING_EFFORT` | `low` | Reasoning depth for diagram and repair calls |
 | `GROQ_ARCHITECTURE_REASONING_EFFORT` | `medium` | Reasoning depth for the architecture call |
