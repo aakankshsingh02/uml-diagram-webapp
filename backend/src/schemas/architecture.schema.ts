@@ -12,12 +12,18 @@ export const ArchitectureElementSchema = z.strictObject({
   name: z.string().regex(ELEMENT_NAME, "must be an identifier: letters and digits only (e.g. CircularFetcher)"),
   kind: ElementKindSchema,
   description: z.string().min(1).max(200),
+  /** Optional grouping (e.g. "Ingestion", "Analysis"); views draw each layer as a package/box. */
+  layer: z.string().max(40).nullish(),
+  /** Datastores only: why it deliberately has no writer (or no reader) in this system. */
+  intentional_reason: z.string().max(200).nullish(),
 });
 
 export const InteractionSchema = z.strictObject({
   from: z.string().min(1),
   to: z.string().min(1),
   message: z.string().min(1).max(120),
+  /** What `to` sends back to `from` (e.g. "clause table"); drawn as a dashed reply. */
+  returns: z.string().max(120).nullish(),
 });
 
 /**

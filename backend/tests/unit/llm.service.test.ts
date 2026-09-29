@@ -17,22 +17,28 @@ const MODEL: ArchitectureModel = {
   interactions: [{ from: "A", to: "B", message: "hi" }],
 };
 
-const sequence = (source: string) => JSON.stringify({ diagrams: [{ type: "sequence", title: "Flow", source }] });
-const valid = sequence("sequenceDiagram\nactor A\nparticipant B\nA->>B: hi");
+const classDiagram = (source: string) => JSON.stringify({ diagrams: [{ type: "class", title: "Types", source }] });
+const SOURCE = "classDiagram\nclass A\nclass B\nA --> B";
+const valid = classDiagram(SOURCE);
+const previous = {
+  prompt: "old",
+  architecture: MODEL,
+  diagrams: [{ type: "class" as const, title: "Types", source: SOURCE }],
+};
 
 describe("LlmService.generateDiagrams trace", () => {
   it("records only the reply that passed validation, with the attempt count", async () => {
-    const invalid = JSON.stringify({ diagrams: [{ type: "sequence", title: "Flow", source: "x", extra: 1 }] });
+    const invalid = JSON.stringify({ diagrams: [{ type: "class", title: "Types", source: "x", extra: 1 }] });
     const { client, create } = fakeGroq(invalid, valid);
 
     const { diagrams, trace } = await new LlmService("", "test-model", client).generateDiagrams(
       "Design a SEBI circular monitor",
-      ["sequence"],
+      ["class"],
       MODEL,
     );
 
     expect(create).toHaveBeenCalledTimes(2);
-    expect(diagrams).toEqual([{ type: "sequence", title: "Flow", source: "sequenceDiagram\nactor A\nparticipant B\nA->>B: hi" }]);
+    expect(diagrams).toEqual([{ type: "class", title: "Types", source: SOURCE }]);
     expect(trace.attempts).toBe(2);
     expect(trace.issues).toEqual([]);
     expect(trace.model).toBe("test-model");
@@ -42,67 +48,48 @@ describe("LlmService.generateDiagrams trace", () => {
     expect(trace.messages[0]!.content).toContain('"name":"B"'); // the model is in the prompt
   });
 
-  it("feeds consistency issues back and accepts the corrected reply", async () => {
-    const inconsistent = sequence("sequenceDiagram\nparticipant System\nA->>System: hi");
-    const { client, create } = fakeGroq(inconsistent, valid);
+  it("flags an update that returns the previous diagrams unchanged", async () => {
+    const { client, create } = fakeGroq(valid, classDiagram("classDiagram\nclass A\nclass B\nclass Alert"));
 
-    const { trace } = await new LlmService("", "m", client).generateDiagrams("prompt text", ["sequence"], MODEL);
+    const { trace } = await new LlmService("", "m", client).generateDiagrams("add alerts", ["class"], MODEL, previous);
 
     expect(trace.attempts).toBe(2);
     expect(trace.issues).toEqual([]);
-    const feedback = create.mock.calls[1]![0].messages.at(-1).content as string;
-    expect(feedback).toContain("not architecture elements: System");
-    expect(feedback).toContain("missing architecture elements: B");
+    expect(create.mock.calls[1]![0].messages.at(-1).content).toContain("identical to the previous version");
+    expect(create.mock.calls[0]![0].messages[1].content).not.toContain("A --> B"); // previous diagrams aren't echoed into the prompt
   });
 
-  it("accepts the last valid reply with its issues instead of failing when it stays inconsistent", async () => {
-    const inconsistent = sequence("sequenceDiagram\nparticipant System\nA->>System: hi");
-    const { client, create } = fakeGroq(inconsistent, inconsistent, inconsistent);
+  it("accepts the last valid reply with its issues instead of failing when it stays unchanged", async () => {
+    const { client, create } = fakeGroq(valid, valid, valid);
 
-    const { diagrams, trace } = await new LlmService("", "m", client).generateDiagrams("prompt", ["sequence"], MODEL);
+    const { diagrams, trace } = await new LlmService("", "m", client).generateDiagrams("add alerts", ["class"], MODEL, previous);
 
     expect(create).toHaveBeenCalledTimes(3);
     expect(diagrams).toHaveLength(1);
-    expect(trace.issues.length).toBeGreaterThan(0);
-  });
-
-  it("flags an update that returns the previous diagrams unchanged", async () => {
-    const { client, create } = fakeGroq(valid, sequence("sequenceDiagram\nactor A\nparticipant B\nA->>B: hello again"));
-    const previous = {
-      prompt: "old",
-      architecture: MODEL,
-      diagrams: [{ type: "sequence" as const, title: "Flow", source: "sequenceDiagram\nactor A\nparticipant B\nA->>B: hi" }],
-    };
-
-    const { trace } = await new LlmService("", "m", client).generateDiagrams("make them consistent", ["sequence"], MODEL, previous);
-
-    expect(trace.attempts).toBe(2);
-    expect(create.mock.calls[1]![0].messages.at(-1).content).toContain("identical to the previous version");
-    expect(create.mock.calls[0]![0].messages[1].content).not.toContain("A->>B"); // previous diagrams aren't echoed into the prompt
+    expect(trace.issues.join(" ")).toContain("identical to the previous version");
   });
 
   it("fails with 502 after two schema failures (the extra attempt is only for consistency feedback)", async () => {
     const { client, create } = fakeGroq("not json", JSON.stringify({ diagrams: [] }), "never requested");
     await expect(
-      new LlmService("", "m", client).generateDiagrams("prompt text", ["sequence"], MODEL),
+      new LlmService("", "m", client).generateDiagrams("prompt text", ["class"], MODEL),
     ).rejects.toMatchObject({ status: 502 });
     expect(create).toHaveBeenCalledTimes(2);
   });
 
   it("falls back to the last schema-valid reply when later attempts break the schema", async () => {
-    const inconsistent = sequence("sequenceDiagram\nparticipant System\nA->>System: hi");
-    const { client, create } = fakeGroq(inconsistent, "not json", "still not json");
+    const { client, create } = fakeGroq(valid, "not json", "still not json");
 
-    const { trace } = await new LlmService("", "m", client).generateDiagrams("prompt", ["sequence"], MODEL);
+    const { trace } = await new LlmService("", "m", client).generateDiagrams("add alerts", ["class"], MODEL, previous);
 
     expect(create).toHaveBeenCalledTimes(3);
     expect(trace.attempts).toBe(3); // every call made, not the index of the accepted reply
-    expect(trace.messages[2]!.content).toBe(inconsistent);
+    expect(trace.messages[2]!.content).toBe(valid);
     expect(trace.issues.length).toBeGreaterThan(0);
   });
 
   it("reports 503 when no API key or client is configured", async () => {
-    await expect(new LlmService("", "m").generateDiagrams("prompt text", ["sequence"], MODEL)).rejects.toMatchObject({
+    await expect(new LlmService("", "m").generateDiagrams("prompt text", ["class"], MODEL)).rejects.toMatchObject({
       status: 503,
     });
   });
@@ -115,10 +102,16 @@ describe("LlmService.designArchitecture", () => {
     const bad = { ...MODEL, interactions: [{ from: "A", to: "Ghost", message: "hi" }] };
     const { client, create } = fakeGroq(reply(bad), reply(MODEL));
 
-    const model = await new LlmService("", "m", client).designArchitecture("prompt");
+    const { architecture, trace } = await new LlmService("", "arch-model", client).designArchitecture("prompt");
 
-    expect(model).toEqual(MODEL);
+    expect(architecture).toEqual(MODEL);
     expect(create.mock.calls[1]![0].messages.at(-1).content).toContain('"Ghost" is not an element');
+    // Its own RL trace: the accepted reply only, every call counted, no consistency issues.
+    expect(trace).toMatchObject({ model: "arch-model", attempts: 2, issues: [] });
+    expect(trace.latencyMs).toBeGreaterThanOrEqual(0);
+    expect(trace.messages.map((m) => m.role)).toEqual(["system", "user", "assistant"]);
+    expect(trace.messages[1]!.content).toContain("prompt");
+    expect(trace.messages[2]!.content).toBe(reply(MODEL));
   });
 
   it("revises the previous model on an update", async () => {

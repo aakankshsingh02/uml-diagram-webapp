@@ -80,6 +80,15 @@ export class ConversationRepository {
     return rows[0] ?? null;
   }
 
+  /** The prompt that started the conversation: the original requirements every revision must still meet. */
+  async findFirstPrompt(conversationId: string, db: Queryable = this.db): Promise<string | null> {
+    const { rows } = await db.query<{ prompt: string }>(
+      "SELECT prompt FROM messages WHERE conversation_id = $1 ORDER BY version LIMIT 1",
+      [conversationId],
+    );
+    return rows[0]?.prompt ?? null;
+  }
+
   async listMessages(conversationId: string, db: Queryable = this.db): Promise<Message[]> {
     const { rows } = await db.query<Message>(
       "SELECT * FROM messages WHERE conversation_id = $1 ORDER BY version ASC",

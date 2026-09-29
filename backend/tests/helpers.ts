@@ -13,7 +13,10 @@ export const auth = { Authorization: `Bearer ${TRAINING_TOKEN}` };
 export const SEBI_PROMPT =
   "Compliance monitoring: pull the latest SEBI circulars, parse them into clauses, extract new requirements, run a gap analysis and assess IT/ops impact.";
 
-/** Sources containing BROKEN fail to render; the fake repair turns BROKEN into FIXED unless UNFIXABLE. */
+/**
+ * Sources containing BROKEN fail to render; the fake repair turns BROKEN into FIXED unless UNFIXABLE.
+ * `sourceFor` only reaches LLM-drawn types: sequence, communication and component are projected.
+ */
 export const FAKE_ARCHITECTURE: ArchitectureModel = {
   elements: [
     { name: "User", kind: "actor", description: "Compliance officer" },
@@ -24,8 +27,21 @@ export const FAKE_ARCHITECTURE: ArchitectureModel = {
 
 export function fakeLlm(sourceFor: (type: DiagramType) => string = () => "graph TD; A-->B"): DiagramLlm {
   return {
-    async designArchitecture() {
-      return FAKE_ARCHITECTURE;
+    async designArchitecture(prompt) {
+      return {
+        architecture: FAKE_ARCHITECTURE,
+        trace: {
+          model: "fake-model",
+          messages: [
+            { role: "system", content: "architecture system prompt" },
+            { role: "user", content: prompt },
+            { role: "assistant", content: JSON.stringify({ architecture: FAKE_ARCHITECTURE }) },
+          ],
+          attempts: 1,
+          latencyMs: 7,
+          issues: [],
+        },
+      };
     },
     async generateDiagrams(prompt, types) {
       const diagrams = types.map((type) => ({ type, title: `${type} view`, source: sourceFor(type) }));
@@ -99,7 +115,15 @@ export async function generate(
   return res.body as {
     conversation_id: string;
     version: number;
-    diagrams: { id: string; type: DiagramType; engine: string; svg: string | null; render_error: string | null }[];
+    diagrams: {
+      id: string;
+      type: DiagramType;
+      engine: string;
+      title: string;
+      source: string;
+      svg: string | null;
+      render_error: string | null;
+    }[];
   };
 }
 

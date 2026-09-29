@@ -1,5 +1,5 @@
 import { DiagramCard, diagramTypeLabel } from "@/entities/diagram";
-import type { ChatTurn } from "@/features/generate-diagrams";
+import { GenerationProgress, type ChatTurn } from "@/features/generate-diagrams";
 import { RateDiagram } from "@/features/rate-diagram";
 
 export function ChatThread({ turns }: { turns: ChatTurn[] }) {
@@ -37,7 +37,7 @@ export function ChatThread({ turns }: { turns: ChatTurn[] }) {
               </div>
             </div>
           ) : (
-            <p className="animate-pulse text-sm text-zinc-500">Generating diagrams…</p>
+            <GenerationProgress startedAt={turn.startedAt} steps={turn.progress ?? []} thinking={turn.thinking} />
           )}
         </li>
       ))}

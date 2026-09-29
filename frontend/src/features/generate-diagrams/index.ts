@@ -1,2 +1,3 @@
-export { useChatSession, type ChatTurn } from "./model/useChatSession";
+export { useChatSession, type ChatTurn, type ThinkingSegment } from "./model/useChatSession";
 export { PromptComposer } from "./ui/PromptComposer";
+export { GenerationProgress } from "./ui/GenerationProgress";

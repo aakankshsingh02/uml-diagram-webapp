@@ -1,6 +1,16 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { pool } from "../../src/db/pool.js";
-import { FAKE_ARCHITECTURE, fakeLlm, generate, resetDb, SEBI_PROMPT, signup, testApp, type TestUser } from "../helpers.js";
+import { projectDiagram } from "../../src/services/projection.js";
+import {
+  FAKE_ARCHITECTURE,
+  fakeLlm,
+  generate,
+  resetDb,
+  SEBI_PROMPT,
+  signup,
+  testApp,
+  type TestUser,
+} from "../helpers.js";
 
 const app = testApp();
 let asha: TestUser;
@@ -79,12 +89,40 @@ describe("POST /api/diagrams/generate", () => {
     const previous = {
       prompt: SEBI_PROMPT,
       architecture: FAKE_ARCHITECTURE,
-      diagrams: [{ type: "sequence", title: "sequence view", source: "graph TD; A-->B" }],
+      diagrams: [projectDiagram("sequence", FAKE_ARCHITECTURE)],
     };
     expect(design.mock.calls[1]![1]).toEqual(previous);
-    // Diagrams are drawn from the (revised) model, with the previous version for the unchanged-output check.
-    expect(draw.mock.calls[1]![2]).toEqual(FAKE_ARCHITECTURE);
-    expect(draw.mock.calls[1]![3]).toEqual(previous);
+    // Only the LLM-drawn type goes to the model, drawn from the (revised) architecture, with the
+    // previous version for the unchanged-output check. The first request was projected only.
+    expect(draw).toHaveBeenCalledTimes(1);
+    expect(draw.mock.calls[0]![1]).toEqual(["use_case"]);
+    expect(draw.mock.calls[0]![2]).toEqual(FAKE_ARCHITECTURE);
+    expect(draw.mock.calls[0]![3]).toEqual(previous);
+  });
+
+  it("projects sequence and component views from the model without a diagram call", async () => {
+    const llm = fakeLlm(() => "UNFIXABLE BROKEN"); // would fail to render if the LLM drew them
+    const design = vi.spyOn(llm, "designArchitecture");
+    const draw = vi.spyOn(llm, "generateDiagrams");
+    const client = testApp({ llm });
+
+    const { diagrams } = await generate(client, asha, { diagram_types: ["sequence", "component"] });
+
+    expect(design).toHaveBeenCalledTimes(1);
+    expect(draw).not.toHaveBeenCalled();
+    expect(diagrams.map((d) => [d.type, d.title, d.render_error])).toEqual([
+      ["sequence", "Main flow", null],
+      ["component", "Components", null],
+    ]);
+    // Both views list the model's elements, under the same names.
+    for (const d of diagrams) {
+      expect(d.source).toMatch(/actor User\b/);
+      expect(d.source).toMatch(/(participant|component) CircularFetcher\b/);
+    }
+    const { rows } = await pool.query("SELECT kind FROM generations");
+    expect(rows).toEqual([{ kind: "architecture" }]);
+    const stored = await pool.query("SELECT projected FROM diagrams ORDER BY position");
+    expect(stored.rows).toEqual([{ projected: true }, { projected: true }]);
   });
 
   it("stores the architecture model on each version", async () => {

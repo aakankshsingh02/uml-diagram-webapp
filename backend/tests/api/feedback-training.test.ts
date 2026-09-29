@@ -13,8 +13,8 @@ beforeEach(async () => {
 });
 afterAll(() => pool.end());
 
-async function exportLines(client = app) {
-  const res = await client.get("/api/training/trajectories").set(auth);
+async function exportLines(client = app, query = "") {
+  const res = await client.get(`/api/training/trajectories${query}`).set(auth);
   expect(res.status).toBe(200);
   expect(res.headers["content-type"]).toContain("application/x-ndjson");
   return { lines: parseNdjson(res.text), asOf: res.headers["x-export-as-of"] as string };
@@ -75,17 +75,24 @@ describe("POST /api/diagrams/:id/feedback", () => {
 });
 
 describe("generation capture", () => {
-  it("persists one generation with system, user and assistant messages per generate call", async () => {
-    const { conversation_id } = await generate(app, asha, { diagram_types: ["sequence", "component"] });
-    await generate(app, asha, { conversation_id, diagram_types: ["sequence"], prompt: "Add email alerts for high-impact gaps" });
+  it("persists an architecture generation per call, plus a diagrams one when the LLM drew any", async () => {
+    const { conversation_id } = await generate(app, asha, { diagram_types: ["sequence", "class"] });
+    await generate(app, asha, { conversation_id, diagram_types: ["component"], prompt: "Add email alerts for high-impact gaps" });
 
     const { rows } = await pool.query(
-      "SELECT g.messages, g.attempts, g.latency_ms FROM generations g JOIN messages m ON m.id = g.message_id ORDER BY m.version",
+      `SELECT m.version, g.kind, g.messages, g.attempts, g.latency_ms
+       FROM generations g JOIN messages m ON m.id = g.message_id ORDER BY m.version, g.kind`,
     );
-    expect(rows).toHaveLength(2);
-    expect(rows[0].messages.map((m: { role: string }) => m.role)).toEqual(["system", "user", "assistant"]);
-    expect(rows[0].attempts).toBe(1);
-    expect(rows[0].latency_ms).toBeGreaterThanOrEqual(42); // diagram call + architecture call
+    expect(rows.map((r) => [r.version, r.kind, r.latency_ms])).toEqual([
+      [1, "architecture", 7],
+      [1, "diagrams", 42],
+      [2, "architecture", 7],
+    ]);
+    for (const row of rows) {
+      expect(row.messages.map((m: { role: string }) => m.role)).toEqual(["system", "user", "assistant"]);
+      expect(row.attempts).toBe(1);
+    }
+    expect(rows[0].messages[2].content).toContain('"architecture"');
   });
 
   it("stores consistency issues the accepted reply still had", async () => {
@@ -93,13 +100,16 @@ describe("generation capture", () => {
     const original = llm.generateDiagrams.bind(llm);
     llm.generateDiagrams = async (...args) => {
       const result = await original(...args);
-      return { ...result, trace: { ...result.trace, issues: ["component diagram is missing architecture elements: Store."] } };
+      return { ...result, trace: { ...result.trace, issues: ["The diagrams are identical to the previous version."] } };
     };
 
-    await generate(testApp({ llm }), asha, { diagram_types: ["component"] });
+    await generate(testApp({ llm }), asha, { diagram_types: ["class"] });
 
-    const { rows } = await pool.query("SELECT consistency_issues FROM generations");
-    expect(rows[0].consistency_issues).toEqual(["component diagram is missing architecture elements: Store."]);
+    const { rows } = await pool.query("SELECT kind, consistency_issues FROM generations ORDER BY kind");
+    expect(rows).toEqual([
+      { kind: "architecture", consistency_issues: [] },
+      { kind: "diagrams", consistency_issues: ["The diagrams are identical to the previous version."] },
+    ]);
   });
 });
 
@@ -113,7 +123,7 @@ describe("GET /api/training/trajectories", () => {
 
   it("exports a generation with one of two diagrams rated -1 as reward -0.5", async () => {
     const { diagrams, conversation_id } = await generate(app, asha, {
-      diagram_types: ["sequence", "component"],
+      diagram_types: ["class", "use_case"],
     });
     await app.post(`/api/diagrams/${diagrams[1]!.id}/feedback`).set(asha.headers).send({ rating: -1, comment: "missing fetcher" });
 
@@ -126,7 +136,7 @@ describe("GET /api/training/trajectories", () => {
         conversation_id,
         version: 1,
         model: "fake-model",
-        feedback: [{ diagram_id: diagrams[1]!.id, type: "component", rating: -1, comment: "missing fetcher" }],
+        feedback: [{ diagram_id: diagrams[1]!.id, type: "use_case", rating: -1, comment: "missing fetcher" }],
       },
     });
     expect(lines[0].messages_and_choices).toHaveLength(3);

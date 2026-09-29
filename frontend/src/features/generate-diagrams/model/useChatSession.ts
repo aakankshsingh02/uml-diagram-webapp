@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ZodError, z } from "zod";
 import type { Diagram, DiagramType } from "@/entities/diagram";
-import { ApiError } from "@/shared/api";
+import { ApiError, type StreamProgress, type StreamThinking } from "@/shared/api";
 import { errorMessage } from "@/shared/lib";
 import { generateDiagrams } from "../api/generateDiagrams";
 import { getConversation, type Conversation } from "../api/getConversation";
@@ -16,6 +16,28 @@ export interface ChatTurn {
   version?: number;
   diagrams?: Diagram[];
   error?: string;
+  /** While generating: when the request started and the steps the backend has reported so far. */
+  startedAt?: number;
+  progress?: StreamProgress[];
+  /** The model's words while generating, one segment per model call (attempts get their own). */
+  thinking?: ThinkingSegment[];
+}
+
+export interface ThinkingSegment {
+  call: string;
+  reasoning: string;
+  answer: string;
+}
+
+/** Keeps the tail of very long text: the latest words are the interesting ones while it streams. */
+const MAX_SEGMENT_CHARS = 20_000;
+const tail = (text: string) => (text.length > MAX_SEGMENT_CHARS ? text.slice(-MAX_SEGMENT_CHARS) : text);
+
+function appendThinking(segments: ThinkingSegment[] = [], event: StreamThinking): ThinkingSegment[] {
+  const last = segments.at(-1);
+  const current = last?.call === event.call ? last : { call: event.call, reasoning: "", answer: "" };
+  const next = { ...current, [event.channel]: tail(current[event.channel] + event.text) };
+  return current === last ? [...segments.slice(0, -1), next] : [...segments, next];
 }
 
 interface Options {
@@ -88,18 +110,21 @@ export function useChatSession(userId: string, { onSaved }: Options = {}) {
   const send = useCallback(
     async (prompt: string, diagramTypes: DiagramType[]) => {
       const turnId = crypto.randomUUID();
-      setTurns((t) => [...t, { id: turnId, prompt, diagramTypes }]);
+      setTurns((t) => [...t, { id: turnId, prompt, diagramTypes, startedAt: Date.now(), progress: [] }]);
       setPending(true);
 
-      const patch = (update: Partial<ChatTurn>) =>
-        setTurns((t) => t.map((turn) => (turn.id === turnId ? { ...turn, ...update } : turn)));
+      const update = (change: (turn: ChatTurn) => Partial<ChatTurn>) =>
+        setTurns((t) => t.map((turn) => (turn.id === turnId ? { ...turn, ...change(turn) } : turn)));
+      const patch = (fields: Partial<ChatTurn>) => update(() => fields);
 
       try {
-        const res = await generateDiagrams({
-          conversation_id: conversationId,
-          prompt,
-          diagram_types: diagramTypes,
-        });
+        const res = await generateDiagrams(
+          { conversation_id: conversationId, prompt, diagram_types: diagramTypes },
+          {
+            onProgress: (event) => update((turn) => ({ progress: [...(turn.progress ?? []), event] })),
+            onThinking: (event) => update((turn) => ({ thinking: appendThinking(turn.thinking, event) })),
+          },
+        );
         setConversationId(res.conversation_id);
         rememberActiveConversation(userId, res.conversation_id);
         patch({ version: res.version, diagrams: res.diagrams });

@@ -6,19 +6,22 @@ export const notFoundHandler: RequestHandler = (_req, _res, next) => {
   next(HttpError.notFound("Route not found"));
 };
 
-export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+/** The status and JSON body for an error; shared by the error middleware and streamed responses. */
+export function toErrorResponse(err: unknown): { status: number; body: { error: string; details?: unknown } } {
   if (err instanceof ZodError) {
-    res.status(400).json({ error: "Validation failed", details: z.flattenError(err) });
-    return;
+    return { status: 400, body: { error: "Validation failed", details: z.flattenError(err) } };
   }
   if (err instanceof HttpError) {
-    res.status(err.status).json({ error: err.message, details: err.details });
-    return;
+    return { status: err.status, body: { error: err.message, details: err.details } };
   }
   if (err instanceof SyntaxError && "body" in err) {
-    res.status(400).json({ error: "Malformed JSON body" });
-    return;
+    return { status: 400, body: { error: "Malformed JSON body" } };
   }
   console.error(err);
-  res.status(500).json({ error: "Internal server error" });
+  return { status: 500, body: { error: "Internal server error" } };
+}
+
+export const errorHandler: ErrorRequestHandler = (err, _req, res, _next) => {
+  const { status, body } = toErrorResponse(err);
+  res.status(status).json(body);
 };
