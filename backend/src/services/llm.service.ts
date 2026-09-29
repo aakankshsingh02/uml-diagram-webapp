@@ -113,14 +113,22 @@ const REASONING_MODELS = /gpt-oss|qwen3/i;
 const isRateLimited = (err: unknown) => err instanceof APIError && (err.status === 413 || err.status === 429);
 
 /** Groq JSON mode's "json_validate_failed": the model produced something that isn't JSON. */
-const isInvalidJson = (err: unknown) =>
-  err instanceof APIError &&
-  err.status === 400 &&
-  (err.error as { error?: { code?: string } } | undefined)?.error?.code === "json_validate_failed";
+// A non-streaming request reports it as a 400; a stream reports it mid-way, with no status and the
+// error body unwrapped, so every shape is checked.
+const isInvalidJson = (err: unknown) => {
+  if (!(err instanceof APIError)) return false;
+  const body = err.error as { code?: string; error?: { code?: string } } | undefined;
+  return (
+    body?.error?.code === "json_validate_failed" ||
+    body?.code === "json_validate_failed" ||
+    /json_validate_failed|failed to generate json/i.test(err.message)
+  );
+};
 
 /** Provider failures become HTTP errors the client can show, instead of an opaque 500. */
 function toHttpError(err: unknown): unknown {
   if (!(err instanceof APIError)) return err;
+  console.warn(`LLM request failed (${err.status ?? "during stream"}): ${err.message}`);
   if (isRateLimited(err)) {
     const retryAfter = Number(err.headers?.get("retry-after")) || 60;
     return new HttpError(429, `The model's rate limit was reached. Try again in about ${retryAfter} seconds.`, {
@@ -128,7 +136,9 @@ function toHttpError(err: unknown): unknown {
     });
   }
   if (err.status === 401 || err.status === 403) return HttpError.unavailable("The LLM API key was rejected");
-  return HttpError.badGateway("The LLM request failed", err.message);
+  // Show the provider's reason: "The LLM request failed" alone gives the user nothing to act on.
+  const reason = err.message.replace(/\s+/g, " ").trim().slice(0, 200);
+  return HttpError.badGateway(`The LLM request failed: ${reason}`, err.message);
 }
 const DEFAULT_SOFT_RETRY_BUDGET_MS = 15_000;
 
