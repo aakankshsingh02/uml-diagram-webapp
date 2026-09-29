@@ -1,6 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { pool } from "../../src/db/pool.js";
-import { fakeLlm, generate, resetDb, SEBI_PROMPT, signup, testApp, type TestUser } from "../helpers.js";
+import { FAKE_ARCHITECTURE, fakeLlm, generate, resetDb, SEBI_PROMPT, signup, testApp, type TestUser } from "../helpers.js";
 
 const app = testApp();
 let asha: TestUser;
@@ -61,9 +61,10 @@ describe("POST /api/diagrams/generate", () => {
     expect(diagrams).toHaveLength(1);
   });
 
-  it("sends the previous version as context and returns version 2 on an update (task case 2)", async () => {
+  it("revises the previous architecture on an update and returns version 2 (task case 2)", async () => {
     const llm = fakeLlm();
-    const spy = vi.spyOn(llm, "generateDiagrams");
+    const design = vi.spyOn(llm, "designArchitecture");
+    const draw = vi.spyOn(llm, "generateDiagrams");
     const client = testApp({ llm });
 
     const first = await generate(client, asha, { diagram_types: ["sequence"] });
@@ -74,11 +75,22 @@ describe("POST /api/diagrams/generate", () => {
     });
 
     expect(second).toMatchObject({ conversation_id: first.conversation_id, version: 2 });
-    expect(spy.mock.calls[0]![2]).toBeUndefined();
-    expect(spy.mock.calls[1]![2]).toEqual({
+    expect(design.mock.calls[0]![1]).toBeUndefined();
+    const previous = {
       prompt: SEBI_PROMPT,
+      architecture: FAKE_ARCHITECTURE,
       diagrams: [{ type: "sequence", title: "sequence view", source: "graph TD; A-->B" }],
-    });
+    };
+    expect(design.mock.calls[1]![1]).toEqual(previous);
+    // Diagrams are drawn from the (revised) model, with the previous version for the unchanged-output check.
+    expect(draw.mock.calls[1]![2]).toEqual(FAKE_ARCHITECTURE);
+    expect(draw.mock.calls[1]![3]).toEqual(previous);
+  });
+
+  it("stores the architecture model on each version", async () => {
+    const { conversation_id } = await generate(app, asha, { diagram_types: ["sequence"] });
+    const { rows } = await pool.query("SELECT architecture FROM messages WHERE conversation_id = $1", [conversation_id]);
+    expect(rows[0].architecture).toEqual(FAKE_ARCHITECTURE);
   });
 
   it("returns 404 and persists nothing for another user's conversation", async () => {

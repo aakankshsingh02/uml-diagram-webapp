@@ -2,6 +2,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { createContainer, type ContainerOverrides } from "../src/container.js";
 import { pool } from "../src/db/pool.js";
+import type { ArchitectureModel } from "../src/schemas/architecture.schema.js";
 import type { DiagramType } from "../src/schemas/diagram.schema.js";
 import type { DiagramLlm } from "../src/services/llm.service.js";
 import type { KrokiService } from "../src/services/kroki.service.js";
@@ -13,8 +14,19 @@ export const SEBI_PROMPT =
   "Compliance monitoring: pull the latest SEBI circulars, parse them into clauses, extract new requirements, run a gap analysis and assess IT/ops impact.";
 
 /** Sources containing BROKEN fail to render; the fake repair turns BROKEN into FIXED unless UNFIXABLE. */
+export const FAKE_ARCHITECTURE: ArchitectureModel = {
+  elements: [
+    { name: "User", kind: "actor", description: "Compliance officer" },
+    { name: "CircularFetcher", kind: "service", description: "Pulls SEBI circulars" },
+  ],
+  interactions: [{ from: "User", to: "CircularFetcher", message: "fetch latest circulars" }],
+};
+
 export function fakeLlm(sourceFor: (type: DiagramType) => string = () => "graph TD; A-->B"): DiagramLlm {
   return {
+    async designArchitecture() {
+      return FAKE_ARCHITECTURE;
+    },
     async generateDiagrams(prompt, types) {
       const diagrams = types.map((type) => ({ type, title: `${type} view`, source: sourceFor(type) }));
       return {
@@ -28,6 +40,7 @@ export function fakeLlm(sourceFor: (type: DiagramType) => string = () => "graph 
           ],
           attempts: 1,
           latencyMs: 42,
+          issues: [],
         },
       };
     },

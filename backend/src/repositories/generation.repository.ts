@@ -33,9 +33,9 @@ export class GenerationRepository {
 
   async insert(messageId: string, trace: GenerationTrace, db: Queryable = this.db): Promise<void> {
     await db.query(
-      `INSERT INTO generations (message_id, model, messages, attempts, latency_ms)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [messageId, trace.model, JSON.stringify(trace.messages), trace.attempts, trace.latencyMs],
+      `INSERT INTO generations (message_id, model, messages, attempts, latency_ms, consistency_issues)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [messageId, trace.model, JSON.stringify(trace.messages), trace.attempts, trace.latencyMs, trace.issues],
     );
   }
 

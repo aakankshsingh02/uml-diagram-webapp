@@ -84,7 +84,22 @@ describe("generation capture", () => {
     );
     expect(rows).toHaveLength(2);
     expect(rows[0].messages.map((m: { role: string }) => m.role)).toEqual(["system", "user", "assistant"]);
-    expect(rows[0]).toMatchObject({ attempts: 1, latency_ms: 42 });
+    expect(rows[0].attempts).toBe(1);
+    expect(rows[0].latency_ms).toBeGreaterThanOrEqual(42); // diagram call + architecture call
+  });
+
+  it("stores consistency issues the accepted reply still had", async () => {
+    const llm = fakeLlm();
+    const original = llm.generateDiagrams.bind(llm);
+    llm.generateDiagrams = async (...args) => {
+      const result = await original(...args);
+      return { ...result, trace: { ...result.trace, issues: ["component diagram is missing architecture elements: Store."] } };
+    };
+
+    await generate(testApp({ llm }), asha, { diagram_types: ["component"] });
+
+    const { rows } = await pool.query("SELECT consistency_issues FROM generations");
+    expect(rows[0].consistency_issues).toEqual(["component diagram is missing architecture elements: Store."]);
   });
 });
 

@@ -3,7 +3,9 @@ import { HttpError } from "../lib/http-error.js";
 import type { ConversationRepository } from "../repositories/conversation.repository.js";
 import type { DiagramRepository, NewDiagram } from "../repositories/diagram.repository.js";
 import type { GenerationRepository } from "../repositories/generation.repository.js";
+import { ArchitectureModelSchema } from "../schemas/architecture.schema.js";
 import { ENGINE_BY_TYPE, type GenerateDiagramsRequest, type LlmDiagram } from "../schemas/diagram.schema.js";
+import { nameIssues } from "./consistency.js";
 import type { DiagramRenderer } from "./kroki.service.js";
 import type { DiagramLlm, PreviousGeneration } from "./llm.service.js";
 
@@ -18,7 +20,7 @@ export class DiagramService {
 
   /**
    * New conversation when no conversation_id is given; otherwise the prompt is treated as an
-   * update and the previous version's diagrams are sent to the model as context.
+   * update: the previous version's architecture model is revised and the diagrams redrawn from it.
    */
   async generate(userId: string, input: GenerateDiagramsRequest) {
     let previous: PreviousGeneration | undefined;
@@ -30,20 +32,34 @@ export class DiagramService {
       const latest = await this.conversations.findLatestMessage(conversation.id);
       if (latest) {
         const prior = await this.diagrams.findByMessageId(latest.id);
+        // A stored model that no longer validates (legacy/hand-edited row) falls back to "no model".
+        const stored = ArchitectureModelSchema.safeParse(latest.architecture);
         previous = {
           prompt: latest.prompt,
+          architecture: stored.success ? stored.data : null,
           diagrams: prior.map((d) => ({ type: d.diagram_type, title: d.title, source: d.source })),
         };
       }
     }
 
+    // One shared model first, then every diagram drawn from it, so the views agree.
+    const started = performance.now();
+    const architecture = await this.llm.designArchitecture(input.prompt, previous);
+    const architectureMs = Math.round(performance.now() - started);
     const { diagrams: generated, trace } = await this.llm.generateDiagrams(
       input.prompt,
       input.diagram_types,
+      architecture,
       previous,
     );
+    trace.latencyMs += architectureMs; // both model calls sit on the request path
     // Render (and repair on syntax errors) all diagrams concurrently.
     const rendered = await Promise.all(generated.map((d) => this.renderWithRepair(d)));
+    if (rendered.some((d) => d.repaired)) {
+      // A syntax repair can rename or add elements after the consistency check passed.
+      const final = rendered.map((d) => ({ type: d.diagram_type, source: d.source }));
+      trace.issues = [...new Set([...trace.issues, ...nameIssues(final, architecture)])];
+    }
 
     return withTransaction(async (tx) => {
       let conversationId = input.conversation_id;
@@ -53,9 +69,21 @@ export class DiagramService {
         conversationId = (await this.conversations.create(userId, input.prompt.slice(0, 80), tx)).id;
       }
 
-      const message = await this.conversations.addMessage(conversationId, input.prompt, input.diagram_types, tx);
+      const message = await this.conversations.addMessage(
+        conversationId,
+        input.prompt,
+        input.diagram_types,
+        architecture,
+        tx,
+      );
       const saved = await this.diagrams.insertMany(message.id, rendered, tx);
       await this.generations.insert(message.id, trace, tx);
+      if (trace.issues.length) {
+        console.warn(
+          `conversation ${conversationId} v${message.version}: accepted with ${trace.issues.length} consistency issue(s)`,
+          trace.issues,
+        );
+      }
 
       return {
         conversation_id: conversationId,
