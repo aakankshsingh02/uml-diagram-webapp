@@ -9,6 +9,12 @@ const EnvSchema = z.object({
   // Optional at boot so infra/health can run without a key; LLM calls fail with 503 until set.
   GROQ_API_KEY: z.string().default(""),
   GROQ_MODEL: z.string().min(1).default("openai/gpt-oss-120b"),
+  // Reasoning depth for gpt-oss/qwen3 models; "low" keeps a generation to a few seconds per call.
+  GROQ_REASONING_EFFORT: z.enum(["low", "medium", "high"]).default("low"),
+  // The architecture call shapes every diagram, so it reasons more by default.
+  GROQ_ARCHITECTURE_REASONING_EFFORT: z.enum(["low", "medium", "high"]).default("medium"),
+  // Stop retrying soft issues (flow gaps, unchanged diagrams) once a call has run this long.
+  LLM_SOFT_RETRY_BUDGET_MS: z.coerce.number().int().min(0).default(15_000),
   // Bearer token for the RL trainer export; export endpoints return 503 while unset.
   TRAINING_API_TOKEN: z
     .string()

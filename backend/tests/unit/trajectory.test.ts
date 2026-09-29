@@ -8,6 +8,7 @@ const diagram = (overrides: Partial<ExportDiagram> = {}): ExportDiagram => ({
   engine: "mermaid",
   rendered: true,
   repaired: false,
+  projected: false,
   rating: null,
   comment: null,
   ...overrides,
@@ -32,31 +33,47 @@ const generation = (diagrams: ExportDiagram[]): ExportableGeneration => ({
 
 describe("toTrajectory reward", () => {
   it("one of two diagrams rated -1 gives -0.5", () => {
-    const t = toTrajectory(generation([diagram({ rating: -1, comment: "missing fetcher" }), diagram()]));
+    const t = toTrajectory(generation([diagram({ rating: -1, comment: "missing fetcher" }), diagram()]), "diagrams");
     expect(t.reward).toBe(-0.5);
     expect(t.metrics).toMatchObject({ diagrams: 2, rated: 1, negative: 1, positive: 0 });
     expect(t.metadata.feedback).toEqual([expect.objectContaining({ rating: -1, comment: "missing fetcher" })]);
   });
 
   it("a render failure scores -1 even when rated +1", () => {
-    const t = toTrajectory(generation([diagram({ rendered: false, rating: 1 }), diagram({ rating: 1 })]));
+    const t = toTrajectory(generation([diagram({ rendered: false, rating: 1 }), diagram({ rating: 1 })]), "diagrams");
     expect(t.reward).toBe(0);
     expect(t.metrics.render_failures).toBe(1);
   });
 
   it("scores a diagram that only rendered after repair as -1, whatever its rating", () => {
-    const t = toTrajectory(generation([diagram({ repaired: true, rating: 1 }), diagram({ rating: 1 })]));
+    const t = toTrajectory(generation([diagram({ repaired: true, rating: 1 }), diagram({ rating: 1 })]), "diagrams");
     expect(t.reward).toBe(0);
     expect(t.metrics).toMatchObject({ repaired: 1, positive: 2, render_failures: 0 });
   });
 
   it("rounds to 3 decimals and maps ART fields", () => {
-    const t = toTrajectory(generation([diagram({ rating: 1 }), diagram(), diagram(), diagram({ repaired: true })]));
+    const t = toTrajectory(generation([diagram({ rating: 1 }), diagram(), diagram(), diagram({ repaired: true })]), "diagrams");
     expect(t.reward).toBe(0);
-    expect(toTrajectory(generation([diagram({ rating: 1 }), diagram(), diagram()])).reward).toBe(0.333);
+    expect(toTrajectory(generation([diagram({ rating: 1 }), diagram(), diagram()]), "diagrams").reward).toBe(0.333);
     expect(t.group_id).toBe("msg-1");
     expect(t.messages_and_choices.map((m) => m.role)).toEqual(["system", "user", "assistant"]);
     expect(t.metrics).toMatchObject({ repaired: 1, attempts: 2, latency_ms: 1234 });
     expect(t.metadata.created_at).toBe("2026-09-30T10:00:00.000Z");
+  });
+});
+
+describe("toTrajectory reward for the architecture exchange", () => {
+  it("scores every diagram as its rating (unrated 0), without render or repair penalties", () => {
+    const t = toTrajectory(
+      generation([
+        diagram({ projected: true, rendered: false, rating: 1 }),
+        diagram({ type: "class", repaired: true, rating: 1 }),
+        diagram({ projected: true, rating: -1 }),
+        diagram({ type: "class" }),
+      ]),
+      "architecture",
+    );
+    expect(t.reward).toBe(0.25);
+    expect(t.metrics).toMatchObject({ diagrams: 4, rated: 3, positive: 2, negative: 1, render_failures: 1, repaired: 1 });
   });
 });

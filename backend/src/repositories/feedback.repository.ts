@@ -1,4 +1,5 @@
 import type { Queryable } from "../db/pool.js";
+import type { DiagramType } from "../schemas/diagram.schema.js";
 
 export interface Feedback {
   id: string;
@@ -30,5 +31,21 @@ export class FeedbackRepository {
       [diagramId, userId, rating, comment],
     );
     return rows[0]!;
+  }
+
+  /** A user's feedback on one message's diagrams, in diagram order. */
+  async findForMessage(
+    messageId: string,
+    userId: string,
+    db: Queryable = this.db,
+  ): Promise<{ diagram_type: DiagramType; rating: 1 | -1; comment: string | null }[]> {
+    const { rows } = await db.query<{ diagram_type: DiagramType; rating: 1 | -1; comment: string | null }>(
+      `SELECT d.diagram_type, f.rating, f.comment
+       FROM feedback f JOIN diagrams d ON d.id = f.diagram_id
+       WHERE d.message_id = $1 AND f.user_id = $2
+       ORDER BY d.position, d.created_at, d.id`,
+      [messageId, userId],
+    );
+    return rows;
   }
 }

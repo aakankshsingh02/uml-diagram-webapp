@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { DiagramSchema, DiagramTypeSchema } from "@/entities/diagram";
-import { apiRequest } from "@/shared/api";
+import { apiStream, type StreamProgress, type StreamThinking } from "@/shared/api";
 
 export const GenerateDiagramsRequestSchema = z.strictObject({
   conversation_id: z.uuid().optional(),
@@ -16,9 +16,15 @@ export const GenerateDiagramsResponseSchema = z.strictObject({
 });
 export type GenerateDiagramsResponse = z.infer<typeof GenerateDiagramsResponseSchema>;
 
-export function generateDiagrams(input: GenerateDiagramsRequest) {
-  return apiRequest("/diagrams/generate", GenerateDiagramsResponseSchema, {
+/** Streams the backend's steps and the model's words while the diagrams are generated. */
+export function generateDiagrams(
+  input: GenerateDiagramsRequest,
+  handlers: { onProgress?: (event: StreamProgress) => void; onThinking?: (event: StreamThinking) => void } = {},
+) {
+  return apiStream("/diagrams/generate", GenerateDiagramsResponseSchema, {
     method: "POST",
     json: GenerateDiagramsRequestSchema.parse(input),
+    onProgress: handlers.onProgress ?? (() => {}),
+    onThinking: handlers.onThinking,
   });
 }

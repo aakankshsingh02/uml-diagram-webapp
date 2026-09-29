@@ -7,8 +7,8 @@ export class TrainingController {
 
   /** NDJSON, one ART trajectory per line; X-Export-As-Of must be echoed back on ack. */
   exportTrajectories = async (req: Request, res: Response) => {
-    const { limit } = TrajectoryQuerySchema.parse(req.query);
-    const { asOf, trajectories } = await this.service.exportTrajectories(limit);
+    const { limit, kind } = TrajectoryQuerySchema.parse(req.query);
+    const { asOf, trajectories } = await this.service.exportTrajectories(limit, kind);
     res
       .set("X-Export-As-Of", asOf)
       .type("application/x-ndjson")

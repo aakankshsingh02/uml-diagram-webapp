@@ -11,12 +11,14 @@ export interface Diagram {
   svg: string | null;
   render_error: string | null;
   repaired: boolean;
+  /** Drawn by code from the architecture model (projection.ts), not by the LLM. */
+  projected: boolean;
   created_at: Date;
 }
 
 export type NewDiagram = Pick<
   Diagram,
-  "diagram_type" | "engine" | "title" | "source" | "svg" | "render_error" | "repaired"
+  "diagram_type" | "engine" | "title" | "source" | "svg" | "render_error" | "repaired" | "projected"
 >;
 
 export interface DiagramOwner {
@@ -30,9 +32,9 @@ export class DiagramRepository {
   async insertMany(messageId: string, diagrams: NewDiagram[], db: Queryable = this.db): Promise<Diagram[]> {
     if (diagrams.length === 0) return [];
     const { rows } = await db.query<Diagram>(
-      `INSERT INTO diagrams (message_id, diagram_type, engine, title, source, svg, render_error, repaired, position)
+      `INSERT INTO diagrams (message_id, diagram_type, engine, title, source, svg, render_error, repaired, projected, position)
        SELECT $1, t.*
-       FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::boolean[])
+       FROM UNNEST($2::text[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::boolean[], $9::boolean[])
             WITH ORDINALITY AS t
        RETURNING *`,
       [
@@ -44,6 +46,7 @@ export class DiagramRepository {
         diagrams.map((d) => d.svg),
         diagrams.map((d) => d.render_error),
         diagrams.map((d) => d.repaired),
+        diagrams.map((d) => d.projected),
       ],
     );
     return rows;

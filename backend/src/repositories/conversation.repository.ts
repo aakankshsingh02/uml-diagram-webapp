@@ -1,4 +1,5 @@
 import type { Queryable } from "../db/pool.js";
+import type { ArchitectureModel } from "../schemas/architecture.schema.js";
 
 export interface Conversation {
   id: string;
@@ -14,6 +15,8 @@ export interface Message {
   version: number;
   prompt: string;
   diagram_types: string[];
+  /** The model this version's diagrams were drawn from; null for versions created before models existed. */
+  architecture: ArchitectureModel | null;
   created_at: Date;
 }
 
@@ -51,18 +54,20 @@ export class ConversationRepository {
     conversationId: string,
     prompt: string,
     diagramTypes: string[],
+    architecture: ArchitectureModel,
     db: Queryable = this.db,
   ): Promise<Message> {
     const { rows } = await db.query<Message>(
-      `INSERT INTO messages (conversation_id, version, prompt, diagram_types)
+      `INSERT INTO messages (conversation_id, version, prompt, diagram_types, architecture)
        VALUES (
          $1,
          (SELECT COALESCE(MAX(version), 0) + 1 FROM messages WHERE conversation_id = $1),
          $2,
-         $3
+         $3,
+         $4
        )
        RETURNING *`,
-      [conversationId, prompt, diagramTypes],
+      [conversationId, prompt, diagramTypes, JSON.stringify(architecture)],
     );
     return rows[0]!;
   }
@@ -73,6 +78,15 @@ export class ConversationRepository {
       [conversationId],
     );
     return rows[0] ?? null;
+  }
+
+  /** The prompt that started the conversation: the original requirements every revision must still meet. */
+  async findFirstPrompt(conversationId: string, db: Queryable = this.db): Promise<string | null> {
+    const { rows } = await db.query<{ prompt: string }>(
+      "SELECT prompt FROM messages WHERE conversation_id = $1 ORDER BY version LIMIT 1",
+      [conversationId],
+    );
+    return rows[0]?.prompt ?? null;
   }
 
   async listMessages(conversationId: string, db: Queryable = this.db): Promise<Message[]> {

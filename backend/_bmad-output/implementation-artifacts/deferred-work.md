@@ -13,3 +13,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-feedback-rl-trajectories.md`
   summary: Backfill or reject feedback on diagrams created before migration 002 (no generation row, so never exported).
   evidence: Review #15. Affects pre-002 dev data only.
+- source_spec: `_bmad-output/implementation-artifacts/spec-consistent-diagrams.md`
+  summary: Export consistency_issues (and the architecture exchange) to the ART trainer so inconsistent-but-accepted replies can be penalised.
+  evidence: Review #17. Stored in generations.consistency_issues but not read by listExportable; the trainer's ExportMetrics is strict, so both sides must change together.

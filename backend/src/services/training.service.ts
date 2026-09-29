@@ -1,4 +1,5 @@
 import type { ExportDiagram, ExportableGeneration, GenerationRepository } from "../repositories/generation.repository.js";
+import type { GenerationKind } from "../schemas/training.schema.js";
 
 /** One line of the NDJSON export; maps 1:1 onto art.Trajectory (see trajectory-export-format.md). */
 export interface Trajectory {
@@ -34,8 +35,16 @@ export function diagramScore(d: ExportDiagram): number {
   return d.rating ?? 0;
 }
 
-export function toTrajectory(g: ExportableGeneration): Trajectory {
-  const scores = g.diagrams.map(diagramScore);
+/**
+ * The architecture exchange is judged by how the user rated the diagrams drawn from it. Render
+ * failures and repairs are the drawing's fault (LLM or projector), not the model's, so they aren't penalised.
+ */
+export function architectureScore(d: ExportDiagram): number {
+  return d.rating ?? 0;
+}
+
+export function toTrajectory(g: ExportableGeneration, kind: GenerationKind): Trajectory {
+  const scores = g.diagrams.map(kind === "architecture" ? architectureScore : diagramScore);
   const mean = scores.length ? scores.reduce((a, b) => a + b, 0) / scores.length : 0;
   const rated = g.diagrams.filter((d) => d.rating !== null);
 
@@ -73,9 +82,9 @@ export function toTrajectory(g: ExportableGeneration): Trajectory {
 export class TrainingService {
   constructor(private readonly generations: GenerationRepository) {}
 
-  async exportTrajectories(limit: number) {
-    const { asOf, rows } = await this.generations.listExportable(limit);
-    return { asOf, trajectories: rows.map(toTrajectory) };
+  async exportTrajectories(limit: number, kind: GenerationKind) {
+    const { asOf, rows } = await this.generations.listExportable(limit, kind);
+    return { asOf, trajectories: rows.map((g) => toTrajectory(g, kind)) };
   }
 
   async acknowledge(ids: string[], asOf: string) {

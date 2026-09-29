@@ -2,6 +2,7 @@ import request from "supertest";
 import { createApp } from "../src/app.js";
 import { createContainer, type ContainerOverrides } from "../src/container.js";
 import { pool } from "../src/db/pool.js";
+import type { ArchitectureModel } from "../src/schemas/architecture.schema.js";
 import type { DiagramType } from "../src/schemas/diagram.schema.js";
 import type { DiagramLlm } from "../src/services/llm.service.js";
 import type { KrokiService } from "../src/services/kroki.service.js";
@@ -12,9 +13,36 @@ export const auth = { Authorization: `Bearer ${TRAINING_TOKEN}` };
 export const SEBI_PROMPT =
   "Compliance monitoring: pull the latest SEBI circulars, parse them into clauses, extract new requirements, run a gap analysis and assess IT/ops impact.";
 
-/** Sources containing BROKEN fail to render; the fake repair turns BROKEN into FIXED unless UNFIXABLE. */
+/**
+ * Sources containing BROKEN fail to render; the fake repair turns BROKEN into FIXED unless UNFIXABLE.
+ * `sourceFor` only reaches LLM-drawn types: sequence, communication and component are projected.
+ */
+export const FAKE_ARCHITECTURE: ArchitectureModel = {
+  elements: [
+    { name: "User", kind: "actor", description: "Compliance officer" },
+    { name: "CircularFetcher", kind: "service", description: "Pulls SEBI circulars" },
+  ],
+  interactions: [{ from: "User", to: "CircularFetcher", message: "fetch latest circulars" }],
+};
+
 export function fakeLlm(sourceFor: (type: DiagramType) => string = () => "graph TD; A-->B"): DiagramLlm {
   return {
+    async designArchitecture(prompt) {
+      return {
+        architecture: FAKE_ARCHITECTURE,
+        trace: {
+          model: "fake-model",
+          messages: [
+            { role: "system", content: "architecture system prompt" },
+            { role: "user", content: prompt },
+            { role: "assistant", content: JSON.stringify({ architecture: FAKE_ARCHITECTURE }) },
+          ],
+          attempts: 1,
+          latencyMs: 7,
+          issues: [],
+        },
+      };
+    },
     async generateDiagrams(prompt, types) {
       const diagrams = types.map((type) => ({ type, title: `${type} view`, source: sourceFor(type) }));
       return {
@@ -28,6 +56,7 @@ export function fakeLlm(sourceFor: (type: DiagramType) => string = () => "graph 
           ],
           attempts: 1,
           latencyMs: 42,
+          issues: [],
         },
       };
     },
@@ -86,7 +115,15 @@ export async function generate(
   return res.body as {
     conversation_id: string;
     version: number;
-    diagrams: { id: string; type: DiagramType; engine: string; svg: string | null; render_error: string | null }[];
+    diagrams: {
+      id: string;
+      type: DiagramType;
+      engine: string;
+      title: string;
+      source: string;
+      svg: string | null;
+      render_error: string | null;
+    }[];
   };
 }
 

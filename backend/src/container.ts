@@ -37,13 +37,20 @@ export function createContainer(overrides: ContainerOverrides = {}) {
   const sessionRepository = new SessionRepository(pool);
 
   const kroki = overrides.kroki ?? new KrokiService(env.KROKI_URL);
-  const llm = overrides.llm ?? new LlmService(env.GROQ_API_KEY, env.GROQ_MODEL);
+  const llm =
+    overrides.llm ??
+    new LlmService(env.GROQ_API_KEY, env.GROQ_MODEL, undefined, {
+      reasoningEffort: env.GROQ_REASONING_EFFORT,
+      architectureReasoningEffort: env.GROQ_ARCHITECTURE_REASONING_EFFORT,
+      softRetryBudgetMs: env.LLM_SOFT_RETRY_BUDGET_MS,
+    });
 
   const authService = new AuthService(userRepository, sessionRepository, env.SESSION_TTL_DAYS * 86_400_000);
   const diagramService = new DiagramService(
     conversationRepository,
     diagramRepository,
     generationRepository,
+    feedbackRepository,
     llm,
     kroki,
   );
